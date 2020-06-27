@@ -1,2 +1,6 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+*.log
 Manifest.toml
 **/data
