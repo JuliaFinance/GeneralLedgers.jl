@@ -1,33 +1,49 @@
+"""
+Ledgers
+
+This package provides support for general financial ledgers
+
+See README.md for the full documentation
+
+Copyright 2019-2020, Eric Forgy, Scott P. Jones and other contributors
+
+Licensed under MIT License, see LICENSE.md
+"""
 module Ledgers
 
-using DelimitedFiles, UUIDs, StructArrays
-using AbstractTrees; import AbstractTrees: children, printnode
-using Instruments; import Instruments: instrument, symbol, amount
-using Assets; using Assets: USD
+using UUIDs, StructArrays, AbstractTrees
+using Instruments, Assets
+import Instruments: instrument, symbol, amount, name, currency
 
-export Credit, Debit, Account, Ledger, Entry
-export balance, credit!, debit!, post!
-    instrument, symbol, amount
+export Credit, Debit, Account, Ledger, Entry, AccountId, AccountInfo
+export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
 
-struct AccountId{Id}
-    value::Id
+struct AccountId{T}
+    value::T
 end
-Base.show(io::IO, id::Id) where {Id <: AccountId} = print(io, id.value)
 
-mutable struct Account{B <: Position,Id <: AccountId}
-    id::Id
-    balance::B
+Base.show(io::IO, id::AccountId) = print(io, id.value)
+
+mutable struct Account{P<:Position,I<:AccountId}
+    id::I
+    balance::P
 end
-Account(balance::B) where {B <: Position} = Account(AccountId(uuid4()), balance)
+Account(balance::Position) = Account(AccountId(uuid4()), balance)
+
+# Identity function (to make code more generic)
+account(v::Account) = v
 
 id(account::Account) = account.id
 balance(account::Account) = account.balance
 
-instrument(::Account{B}) where {B <: Position} = instrument(B)
-symbol(::Account{Position{Instrument{S}}}) where {S} = S
+instrument(::Account{P}) where {P<:Position} = instrument(P)
+symbol(::Account{P}) where {P<:Position} = symbol(P)
+currency(::Account{P}) where {P<:Position} = currency(P)
 
-debit!(account::Account,amount::Position) = account.balance += amount
-credit!(account::Account,amount::Position) = account.balance -= amount
+amount(amt::Account) = amount(amt.balance)
+
+debit!(account::Account, amt::Position) = (account.balance += amt)
+credit!(account::Account, amt::Position) = (account.balance -= amt)
 
 Base.show(io::IO, account::Account) = print(io, "$(string(id(account))): $(balance(account)).")
 
@@ -36,29 +52,29 @@ struct Entry{D,C}
     credit::C
 end
 
-Base.show(io::IO,e::Entry{D,C}) where {D <: Account,C <: Account} = print(io, "Entry:\n", "  Debit: $(e.debit)\n", "  Credit: $(e.credit)")
-Base.show(io::IO,::MIME"text/plain",e::Entry{D,C}) where {D <: Account,C <: Account} = print(io, "Entry:\n", "  Debit: $(e.debit)\n", "  Credit: $(e.credit)")
-
-function post!(entry::Entry{D,C}, amount::Position) where {D <: Account,C <: Account}
-    debit!(entry.debit, amount)
-    credit!(entry.credit, amount)
-    entry
-end
+Base.show(io::IO, e::Entry{<:Account,<:Account}) =
+    print(io, "Entry:\n", "  Debit: $(e.debit)\n", "  Credit: $(e.credit)")
 
 abstract type AccountType end
 struct Credit <: AccountType end
 struct Debit <: AccountType end
+
 Base.show(io::IO, ::Type{Debit}) = print(io, "Debit")
 Base.show(io::IO, ::Type{Credit}) = print(io, "Credit")
 
-struct AccountInfo{AT <: AccountType}
+# SPJ: this does not maintain the distinction we'd talked about, of keeping
+# all debit accounts and all credit accounts in with separate types.
+# This will end up doing a lot of processing at run-time, and will be relatively
+# rather slow compared to what we had discussed.
+
+struct AccountInfo{T<:AccountType}
     account::Account
     name::String
     parent::Union{Nothing,AccountInfo}
     subaccounts::Vector{AccountInfo}
 
-    function AccountInfo(::Type{AT}, account, name, parent=nothing) where {AT <: AccountType}
-        ag = new{AT}(account, name, parent, Vector{AccountInfo}())
+    function AccountInfo(::Type{T}, account, name, parent=nothing) where {T<:AccountType}
+        ag = new{T}(account, name, parent, Vector{AccountInfo}())
         isnothing(parent) || push!(parent.subaccounts, ag)
         return ag
     end
@@ -77,60 +93,49 @@ balance(info::AccountInfo{Credit}) =
     isempty(subaccounts(info)) ? -balance(account(info)) :
     -balance(account(info)) - sum(map(info->balance(account(info)), subaccounts(info)))
 
-function post!(entry::Entry{D,C}, amount::Position) where {D <: AccountInfo,C <: AccountInfo}
-    debit!(entry.debit.account, amount)
-    credit!(entry.credit.account, amount)
+function post!(entry::Entry, amt::Position)
+    debit!(account(entry.debit), amt)
+    credit!(account(entry.credit), amt)
     entry
 end
 
-children(info::AccountInfo) = isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
-printnode(io::IO,info::AccountInfo{AT}) where {AT <: AccountType} = print(io, "$(name(info)) ($(id(info))): $(balance(info))")
-Base.show(io::IO,info::AccountInfo) = isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
-Base.show(io::IO,::MIME"text/plain",info::AccountInfo) = isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
+AbstractTrees.children(info::AccountInfo) =
+    isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
+AbstractTrees.printnode(io::IO,info::AccountInfo) =
+    print(io, "$(name(info)) ($(id(info))): $(balance(info))")
+Base.show(io::IO,info::AccountInfo) =
+    isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
 
-Base.show(io::IO,e::Entry{D,C}) where {D <: AccountInfo,C <: AccountInfo} = print(io,
-    "Entry:\n",
-    "  Debit: $(name(e.debit)) ($(id(e.debit))): $(balance(e.debit))\n",
-    "  Credit: $(name(e.credit)) ($(id(e.credit))): $(balance(e.credit))\n")
-Base.show(io::IO,::MIME"text/plain",e::Entry{D,C}) where {D <: AccountInfo,C <: AccountInfo} = print(io,
-    "Entry:\n",
-    "  Debit: $(name(e.debit)) ($(id(e.debit))): $(balance(e.debit))\n",
-    "  Credit: $(name(e.credit)) ($(id(e.credit))): $(balance(e.credit))\n")
-
-struct Ledger{B <: Position,Id <: AccountId}
-    indexes::Dict{Id,Int}
-    accounts::StructArray{Account{B,Id}}
+function Base.show(io::IO, e::Entry)
+    print(io,
+          "Entry:\n",
+          "  Debit: $(name(e.debit)) ($(id(e.debit))): $(balance(e.debit))\n",
+          "  Credit: $(name(e.credit)) ($(id(e.credit))): $(balance(e.credit))\n")
 end
-function Ledger(accounts::Vector{Account{B,Id}}) where {B <: Position,Id <: AccountId}
-    indexes = Dict{Id,Int}()
-    for (index, account) in enumerate(accounts)
-        indexes[id(account)] = index
+
+struct Ledger{P<:Position,I<:AccountId}
+    indexes::Dict{I,Int}
+    accounts::StructArray{Account{P,I}}
+
+    function Ledger(accounts::Vector{Account{P,I}}) where {P<:Position,I<:AccountId}
+        indexes = Dict{I,Int}()
+        for (index, account) in enumerate(accounts)
+            indexes[id(account)] = index
+        end
+        new{P,I}(indexes, StructArray(accounts))
     end
-    Ledger{B,Id}(
-        indexes,
-        StructArray(accounts)
-    )
 end
 
 Base.getindex(ledger::Ledger, ix) = ledger.accounts[ix]
 
-Base.getindex(ledger::Ledger, id::Id) where {Id <: AccountId} = ledger.accounts[ledger.indexes[id]]
-Base.getindex(ledger::Ledger, array::AbstractArray{Id,1}) where {Id <: AccountId} = ledger.accounts[broadcast(id->ledger.indexes[id], array)]
+Base.getindex(ledger::Ledger, id::AccountId) =
+    ledger.accounts[ledger.indexes[id]]
+Base.getindex(ledger::Ledger, array::AbstractVector{<:AccountId}) =
+    ledger.accounts[broadcast(id->ledger.indexes[id], array)]
 
 function add_account!(ledger::Ledger, account::Account)
     push!(ledger.accounts, account)
     ledger.indexes[id(account)] = length(ledger.accounts)
-end
-
-function example()
-    group = AccountInfo(Credit, Account(AccountId("0000000"), USD(0)), "Account Group")
-    assets = AccountInfo(Debit, Account(AccountId("1000000"), USD(0)), "Assets", group)
-    liabilities = AccountInfo(Credit, Account(AccountId("2000000"), USD(0)), "Liabilities", group)
-    cash = AccountInfo(Debit, Account(AccountId("1010000"), USD(0)), "Cash", assets)
-    payable = AccountInfo(Credit, Account(AccountId("2010000"), USD(0)), "Accounts Payable", liabilities)
-
-    entry = Entry(cash, payable)
-    return group, assets, liabilities, cash, payable, entry
 end
 
 # const chartofaccounts = Dict{String,AccountGroup{<:Cash}}()
@@ -174,4 +179,4 @@ end
 #     return newaccount
 # end
 
-end
+end # module Ledgers

@@ -1,7 +1,10 @@
 name = "Ledgers"
 uuid = "adab416e-2b84-11e9-2fd1-b5546e90182a"
-authors = ["Eric Forgy <Eric.Forgy@cavalre.com>"]
-version = "0.2.0"
+keywords = ["Finance", "Ledger"]
+license = "MIT"
+desc = "Financial ledgers"
+authors = ["Eric Forgy <Eric.Forgy@cavalre.com>", "ScottPJones <scottjones@alum.mit.edu>"]
+version = "0.3.0"
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
@@ -11,5 +14,12 @@ Instruments = "2a4f3d17-849a-48a1-809e-d780c70a95a0"
 StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
+[compat]
+Instruments = ">= 0.7"
+Assets = ">= 0.7"
+
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
