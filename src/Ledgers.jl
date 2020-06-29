@@ -103,6 +103,7 @@ AbstractTrees.children(info::AccountInfo) =
     isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
 AbstractTrees.printnode(io::IO,info::AccountInfo) =
     print(io, "$(name(info)) ($(id(info))): $(balance(info))")
+
 Base.show(io::IO,info::AccountInfo) =
     isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
 
