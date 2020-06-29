@@ -75,7 +75,7 @@ struct AccountInfo{T<:AccountType}
 
     function AccountInfo(::Type{T}, account, name, parent=nothing) where {T<:AccountType}
         ag = new{T}(account, name, parent, Vector{AccountInfo}())
-        isnothing(parent) || push!(parent.subaccounts, ag)
+        (parent === nothing) || push!(parent.subaccounts, ag)
         return ag
     end
 end
