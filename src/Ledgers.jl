@@ -19,8 +19,14 @@ export Credit, Debit, Account, Ledger, Entry, AccountId, AccountInfo
 export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
 
 abstract type Identifier end
-struct AccountId <: Identifier; value::UUID; end
-struct AccountCode; value::String; end
+struct AccountId <: Identifier
+    value::UUID
+end
+AccountId() = AccountId(uuid4())
+
+struct AccountCode
+    value::String
+end
 
 abstract type AccountType end
 struct Credit <: AccountType end
@@ -30,7 +36,7 @@ mutable struct Account{P<:Position}
     id::AccountId
     balance::P
 end
-Account(balance::Position) = Account(AccountId(uuid4()), balance)
+Account(balance::Position) = Account(AccountId(), balance)
 
 abstract type AccountNode end
 struct AccountInfo{AT<:AccountType,A<:Account} <: AccountNode
