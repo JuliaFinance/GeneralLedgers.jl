@@ -18,7 +18,8 @@ import Instruments: instrument, symbol, amount, name, currency
 export Credit, Debit, Account, Ledger, Entry, AccountId, AccountInfo
 export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
 
-struct AccountId; value::UUID; end
+abstract type Identifier end
+struct AccountId <: Identifier; value::UUID; end
 struct AccountCode; value::String; end
 
 abstract type AccountType end
@@ -31,7 +32,8 @@ mutable struct Account{P<:Position}
 end
 Account(balance::Position) = Account(AccountId(uuid4()), balance)
 
-struct AccountInfo{AT<:AccountType,A<:Account}
+abstract type AccountNode end
+struct AccountInfo{AT<:AccountType,A<:Account} <: AccountNode
     account::A
     code::AccountCode
     name::String
@@ -41,7 +43,7 @@ struct AccountInfo{AT<:AccountType,A<:Account}
     end
 end
 
-struct AccountGroup{AT<:AccountType}
+struct AccountGroup{AT<:AccountType} <: AccountNode
     code::AccountCode
     name::String
     parent::Union{Nothing,AccountGroup{<:AccountType}}
@@ -165,7 +167,7 @@ end
 #     return newaccount
 # end
 
-Base.show(io::IO, id::AccountId) = print(io, id.value)
+Base.show(io::IO, id::Identifier) = print(io, id.value)
 Base.show(io::IO, code::AccountCode) = print(io, code.value)
 
 Base.show(io::IO, ::Type{Debit}) = print(io, "Debit")
