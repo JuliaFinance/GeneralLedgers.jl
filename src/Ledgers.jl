@@ -18,100 +18,86 @@ import Instruments: instrument, symbol, amount, name, currency
 export Credit, Debit, Account, Ledger, Entry, AccountId, AccountInfo
 export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
 
-struct AccountId{T}
-    value::T
-end
-
-Base.show(io::IO, id::AccountId) = print(io, id.value)
-
-mutable struct Account{P<:Position,I<:AccountId}
-    id::I
-    balance::P
-end
-Account(balance::Position) = Account(AccountId(uuid4()), balance)
-
-# Identity function (to make code more generic)
-account(v::Account) = v
-
-id(account::Account) = account.id
-balance(account::Account) = account.balance
-
-instrument(::Account{P}) where {P<:Position} = instrument(P)
-symbol(::Account{P}) where {P<:Position} = symbol(P)
-currency(::Account{P}) where {P<:Position} = currency(P)
-
-amount(amt::Account) = amount(amt.balance)
-
-debit!(account::Account, amt::Position) = (account.balance += amt)
-credit!(account::Account, amt::Position) = (account.balance -= amt)
-
-Base.show(io::IO, account::Account) = print(io, "$(string(id(account))): $(balance(account)).")
-
-struct Entry{D,C}
-    debit::D
-    credit::C
-end
-
-Base.show(io::IO, e::Entry{<:Account,<:Account}) =
-    print(io, "Entry:\n", "  Debit: $(e.debit)\n", "  Credit: $(e.credit)")
+struct AccountId; value::UUID; end
+struct AccountCode; value::String; end
 
 abstract type AccountType end
 struct Credit <: AccountType end
 struct Debit <: AccountType end
 
-Base.show(io::IO, ::Type{Debit}) = print(io, "Debit")
-Base.show(io::IO, ::Type{Credit}) = print(io, "Credit")
+mutable struct Account{P<:Position}
+    id::AccountId
+    balance::P
+end
+Account(balance::Position) = Account(AccountId(uuid4()), balance)
 
-# SPJ: this does not maintain the distinction we'd talked about, of keeping
-# all debit accounts and all credit accounts in with separate types.
-# This will end up doing a lot of processing at run-time, and will be relatively
-# rather slow compared to what we had discussed.
-
-struct AccountInfo{T<:AccountType}
-    account::Account
+struct AccountInfo{AT<:AccountType,A<:Account}
+    account::A
+    code::AccountCode
     name::String
-    parent::Union{Nothing,AccountInfo}
-    subaccounts::Vector{AccountInfo}
 
-    function AccountInfo(::Type{T}, account, name, parent=nothing) where {T<:AccountType}
-        ag = new{T}(account, name, parent, Vector{AccountInfo}())
-        (parent === nothing) || push!(parent.subaccounts, ag)
-        return ag
+    function AccountInfo(::Type{T}, account, code, name) where {T<:AccountType}
+        return new{T}(account, code, name)
     end
 end
 
-account(info::AccountInfo) = info.account
-name(info::AccountInfo) = info.name
-parent(info::AccountInfo) = info.parent
-subaccounts(info::AccountInfo) = info.subaccounts
+struct AccountGroup{AT<:AccountType}
+    code::AccountCode
+    name::String
+    parent::Union{Nothing,AccountGroup{<:AccountType}}
+    subaccounts::Vector{AccountInfo}
+    subgroups::Vector{AccountGroup}
 
+    function AccountGroup(::Type{T}, account, name, parent=nothing) where {T<:AccountType}
+        new{T}(account, code, name, parent, Vector{AccountInfo}(), Vector{AccountGroup}())
+    end
+end
+
+# Identity function (to make code more generic)
+account(acc::Account) = acc
+account(info::AccountInfo) = info.account
+
+account_type(::Union{AccountInfo{AT},AccountGroup{AT}}) where {AT} = AT
+code(acc::Union{<:AccountInfo,<:AccountGroup}) = acc.code
+name(acc::Union{<:AccountInfo,<:AccountGroup}) = acc.name
+
+parent(group::AccountGroup) = group.parent
+subaccounts(group::AccountGroup) = group.subaccounts
+subgroups(group::AccountGroup) = group.subgroups
+
+id(acc::Account) = acc.id
 id(info::AccountInfo) = id(account(info))
-balance(info::AccountInfo{Debit}) = 
-    isempty(subaccounts(info)) ? balance(account(info)) : 
-    balance(account(info)) + sum(map(info->balance(account(info)), subaccounts(info)))
-balance(info::AccountInfo{Credit}) = 
-    isempty(subaccounts(info)) ? -balance(account(info)) :
-    -balance(account(info)) - sum(map(info->balance(account(info)), subaccounts(info)))
+
+balance(acc::Account) = acc.balance
+balance(info::AccountInfo) = balance(account(info))
+balance(group::AccountGroup) = 
+    sum(map(info->balance(info), subaccounts(group))) + 
+    sum(map(grp->balance(grp), subgroups(group)))
+
+instrument(::Account{P}) where {P<:Position} = instrument(P)
+instrument(info::AccountInfo) = instrument(account(info))
+
+symbol(::Account{P}) where {P<:Position} = symbol(P)
+symbol(info::AccountInfo) = symbol(account(info))
+
+currency(::Account{P}) where {P<:Position} = currency(P)
+currency(info::AccountInfo) = currency(account(info))
+
+amount(acc::Account) = amount(balance(acc))
+amount(info::AccountInfo) = amount(balance(account(info)))
+
+debit!(acc::Account, amt::Position) = (acc.balance += amt)
+credit!(acc::Account, amt::Position) = (acc.balance -= amt)
+
+struct Entry{D<:Account,C<:Account}
+    debit::D
+    credit::C
+end
 
 function post!(entry::Entry, amt::Position)
     debit!(account(entry.debit), amt)
     credit!(account(entry.credit), amt)
     entry
-end
-
-AbstractTrees.children(info::AccountInfo) =
-    isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
-AbstractTrees.printnode(io::IO,info::AccountInfo) =
-    print(io, "$(name(info)) ($(id(info))): $(balance(info))")
-
-Base.show(io::IO,info::AccountInfo) =
-    isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
-
-function Base.show(io::IO, e::Entry)
-    print(io,
-          "Entry:\n",
-          "  Debit: $(name(e.debit)) ($(id(e.debit))): $(balance(e.debit))\n",
-          "  Credit: $(name(e.credit)) ($(id(e.credit))): $(balance(e.credit))\n")
 end
 
 struct Ledger{P<:Position,I<:AccountId}
@@ -128,15 +114,14 @@ struct Ledger{P<:Position,I<:AccountId}
 end
 
 Base.getindex(ledger::Ledger, ix) = ledger.accounts[ix]
-
 Base.getindex(ledger::Ledger, id::AccountId) =
     ledger.accounts[ledger.indexes[id]]
 Base.getindex(ledger::Ledger, array::AbstractVector{<:AccountId}) =
     ledger.accounts[broadcast(id->ledger.indexes[id], array)]
 
-function add_account!(ledger::Ledger, account::Account)
-    push!(ledger.accounts, account)
-    ledger.indexes[id(account)] = length(ledger.accounts)
+function add_account!(ledger::Ledger, acc::Account)
+    push!(ledger.accounts, acc)
+    ledger.indexes[id(acc)] = length(ledger.accounts)
 end
 
 # const chartofaccounts = Dict{String,AccountGroup{<:Cash}}()
@@ -178,6 +163,35 @@ end
 #         balance(subaccount).amount > 0. && trim(subaccount,newaccount)
 #     end
 #     return newaccount
+# end
+
+Base.show(io::IO, id::AccountId) = print(io, id.value)
+Base.show(io::IO, code::AccountCode) = print(io, code.value)
+
+Base.show(io::IO, ::Type{Debit}) = print(io, "Debit")
+Base.show(io::IO, ::Type{Credit}) = print(io, "Credit")
+
+Base.show(io::IO, acc::Account) = print(io, "$(string(id(acc))): $(balance(acc)).")
+Base.show(io::IO, info::AccountInfo{Debit}) = print(io, "$(code(info)) - $(name(info)): $(balance(info)).")
+Base.show(io::IO, info::AccountInfo{Credit}) = print(io, "$(code(info)) - $(name(info)): $(-balance(info)).")
+
+
+# AbstractTrees.children(info::AccountInfo) =
+#     isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
+# AbstractTrees.printnode(io::IO,info::AccountInfo) =
+#     print(io, "$(name(info)) ($(id(info))): $(balance(info))")
+
+# Base.show(io::IO,info::AccountInfo) =
+#     isempty(subaccounts(info)) ? printnode(io, info) : print_tree(io, info)
+
+# Base.show(io::IO, e::Entry) =
+#     print(io, "Entry:\n", "  Debit: $(e.debit)\n", "  Credit: $(e.credit)")
+
+# function Base.show(io::IO, e::Entry)
+#     print(io,
+#           "Entry:\n",
+#           "  Debit: $(name(e.debit)) ($(id(e.debit))): $(balance(e.debit))\n",
+#           "  Credit: $(name(e.credit)) ($(id(e.credit))): $(balance(e.credit))\n")
 # end
 
 end # module Ledgers
