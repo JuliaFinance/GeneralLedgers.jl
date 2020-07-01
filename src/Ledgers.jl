@@ -18,6 +18,7 @@ using Assets: USD
 
 export Account, Ledger, Entry, AccountId, AccountCode, AccountInfo, AccountGroup
 export id, balance, credit!, debit!, post!, instrument, symbol, amount, code, name, currency
+export parent, subaccounts, subgroups
 
 abstract type Identifier end
 
@@ -68,13 +69,16 @@ struct AccountGroup{B <: Position} <: AccountNode{B}
     subgroups::StructArray{AccountGroup{B}}
 
     function AccountGroup{B}(
+        id,
         code,
         name,
         isdebit=true,
         parent=nothing,
         subaccounts=StructArray(Vector{AccountInfo{B}}()),
         subgroups=StructArray(Vector{AccountGroup{B}}())) where {B <: Position}
-        new{B}(AccountId(), code, name, isdebit, parent, subaccounts, subgroups)
+        acc = new{B}(id, code, name, isdebit, parent, subaccounts, subgroups)
+        parent === nothing || push!(parent.subgroups, acc)
+        acc
     end
 end
 
@@ -86,7 +90,7 @@ AccountGroup(
     parent=nothing, 
     subaccounts=StructArray(Vector{AccountInfo{B}}()),
     subgroups=StructArray(Vector{AccountGroup{B}}())) where {B <: Position} =
-    AccountGroup{B}(code, name, isdebit, parent, subaccounts, subgroups)
+    AccountGroup{B}(AccountId(), code, name, isdebit, parent, subaccounts, subgroups)
 
 # Identity function (to make code more generic)
 account(acc::AccountType) = acc
@@ -122,7 +126,6 @@ struct Entry{B <: Position}
     debit::AccountInfo{B}
     credit::AccountInfo{B}
 end
-# Entry(debit::AccountInfo, credit::AccountInfo) = Entry(account(debit),account(credit))
 
 function post!(entry::Entry, amt::Position)
     debit!(account(entry.debit), amt)
@@ -208,11 +211,23 @@ end
 # end
 
 Base.show(io::IO, id::Identifier) = print(io, id.value)
+
 Base.show(io::IO, code::AccountCode) = print(io, code.value)
 
 Base.show(io::IO, acc::Account) = print(io, "$(string(id(acc))): $(balance(acc))")
-Base.show(io::IO, acc::AccountNode) = print(io, "[$(code(acc))] $(name(acc)): $(isdebit(acc) ? balance(acc) : -balance(acc))")
 
+Base.show(io::IO, acc::AccountNode) = print_tree(io, acc)
+
+Base.show(io::IO, entry::Entry) = print_tree(io, entry)
+
+AbstractTrees.children(acc::AccountGroup) = vcat(Vector(subgroups(acc)),Vector(subaccounts(acc)))
+
+AbstractTrees.printnode(io::IO, acc::AccountNode) = 
+    print(io, "[$(code(acc))] $(name(acc)): $(isdebit(acc) ? balance(acc) : -balance(acc))")
+
+AbstractTrees.children(entry::Entry) = [entry.debit, entry.credit]
+
+AbstractTrees.printnode(io::IO, ::Entry) = print(io, "Entry:")
 
 # AbstractTrees.children(info::AccountInfo) =
 #     isempty(subaccounts(info)) ? Vector{AccountInfo}() : subaccounts(info)
