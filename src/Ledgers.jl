@@ -15,91 +15,106 @@ using UUIDs, StructArrays, AbstractTrees
 using Instruments, Assets
 import Instruments: instrument, symbol, amount, name, currency
 
-export Credit, Debit, Account, Ledger, Entry, AccountId, AccountInfo
+export Account, Ledger, Entry, AccountId, AccountInfo
 export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
 
 abstract type Identifier end
+
 struct AccountId <: Identifier
     value::UUID
 end
+
 AccountId() = AccountId(uuid4())
 
 struct AccountCode
     value::String
 end
 
-abstract type AccountType end
-struct Credit <: AccountType end
-struct Debit <: AccountType end
+abstract type AccountType{B<:Position} end
 
-mutable struct Account{P<:Position}
+mutable struct Account{B<:Position} <: AccountType{B}
     id::AccountId
-    balance::P
+    balance::B
 end
+
 Account(balance::Position) = Account(AccountId(), balance)
 
-abstract type AccountNode end
-struct AccountInfo{AT<:AccountType,A<:Account} <: AccountNode
-    account::A
+abstract type AccountNode{B<:Position} <: AccountType{B} end
+
+struct AccountInfo{B<:Position} <: AccountNode{B}
+    account::Account{B}
     code::AccountCode
     name::String
+    isdebit::Bool
 
-    function AccountInfo(::Type{T}, account, code, name) where {T<:AccountType}
-        return new{T}(account, code, name)
+    function AccountInfo{B}(account, code, name, isdebit=true) where {B<:Position}
+        return new(account, code, name, isdebit)
     end
 end
 
-struct AccountGroup{AT<:AccountType} <: AccountNode
+AccountInfo(
+    ::Type{B},
+    account,
+    code,
+    name,
+    isdebit=true) where {B<:Position} = 
+    AccountInfo{B}(account,code,name,isdebit)
+
+struct AccountGroup{B<:Position} <: AccountNode{B}
+    id::AccountId
     code::AccountCode
     name::String
-    parent::Union{Nothing,AccountGroup{<:AccountType}}
-    subaccounts::Vector{AccountInfo}
-    subgroups::Vector{AccountGroup}
+    isdebit::Bool
+    parent::Union{Nothing,AccountGroup{B}}
+    subaccounts::StructArray{AccountInfo{B}}
+    subgroups::StructArray{AccountGroup{B}}
 
-    function AccountGroup(::Type{T}, account, name, parent=nothing) where {T<:AccountType}
-        new{T}(account, code, name, parent, Vector{AccountInfo}(), Vector{AccountGroup}())
+    function AccountGroup{B}(code, name, isdebit=true, parent=nothing) where {B<:Position}
+        new{B}(code, name, isdebit, parent, Vector{AccountInfo{B}}(), Vector{AccountGroup{B}}())
     end
 end
+
+AccountGroup(
+    ::Type{B},
+    code,
+    name,
+    isdebit=true,
+    parent=nothing, 
+    subaccounts=Vector{AccountInfo{B}}(), 
+    subgroups=Vector{AccountGroup{B}}()) where {B<:Position} = 
+    AccountGroup{B}(code,name,isdebit,parent,subaccounts,subgroups)
 
 # Identity function (to make code more generic)
-account(acc::Account) = acc
+account(acc::AccountType) = acc
 account(info::AccountInfo) = info.account
 
-account_type(::Union{AccountInfo{AT},AccountGroup{AT}}) where {AT} = AT
-code(acc::Union{<:AccountInfo,<:AccountGroup}) = acc.code
-name(acc::Union{<:AccountInfo,<:AccountGroup}) = acc.name
+code(acc::AccountNode) = acc.code
+name(acc::AccountNode) = acc.name
 
 parent(group::AccountGroup) = group.parent
 subaccounts(group::AccountGroup) = group.subaccounts
 subgroups(group::AccountGroup) = group.subgroups
 
-id(acc::Account) = acc.id
-id(info::AccountInfo) = id(account(info))
+id(acc::AccountType) = id(account(acc))
 
-balance(acc::Account) = acc.balance
-balance(info::AccountInfo) = balance(account(info))
-balance(group::AccountGroup) = 
-    sum(map(info->balance(info), subaccounts(group))) + 
-    sum(map(grp->balance(grp), subgroups(group)))
+balance(acc) = balance(account(acc))
+balance(group::AccountGroup) =
+    sum(balance.(subaccounts(group))) + sum(balance.(subgroups(group)))
 
-instrument(::Account{P}) where {P<:Position} = instrument(P)
-instrument(info::AccountInfo) = instrument(account(info))
+instrument(::AccountType{B}) where {B<:Position} = instrument(B)
 
-symbol(::Account{P}) where {P<:Position} = symbol(P)
-symbol(info::AccountInfo) = symbol(account(info))
+symbol(::AccountType{B}) where {B<:Position} = symbol(B)
 
-currency(::Account{P}) where {P<:Position} = currency(P)
-currency(info::AccountInfo) = currency(account(info))
+currency(::AccountType{B}) where {B<:Position} = currency(B)
 
-amount(acc::Account) = amount(balance(acc))
-amount(info::AccountInfo) = amount(balance(account(info)))
+amount(acc::AccountType) = amount(balance(acc))
 
 debit!(acc::Account, amt::Position) = (acc.balance += amt)
 credit!(acc::Account, amt::Position) = (acc.balance -= amt)
 
-struct Entry{D<:Account,C<:Account}
-    debit::D
-    credit::C
+struct Entry{B<:Position}
+    debit::Account{B}
+    credit::Account{B}
 end
 
 function post!(entry::Entry, amt::Position)
@@ -108,16 +123,16 @@ function post!(entry::Entry, amt::Position)
     entry
 end
 
-struct Ledger{P<:Position,I<:AccountId}
-    indexes::Dict{I,Int}
-    accounts::StructArray{Account{P,I}}
+struct Ledger{P<:Position}
+    indexes::Dict{AccountId,Int}
+    accounts::StructArray{Account{P}}
 
-    function Ledger(accounts::Vector{Account{P,I}}) where {P<:Position,I<:AccountId}
-        indexes = Dict{I,Int}()
+    function Ledger(accounts::Vector{Account{P}}) where {P<:Position}
+        indexes = Dict{AccountId,Int}()
         for (index, account) in enumerate(accounts)
             indexes[id(account)] = index
         end
-        new{P,I}(indexes, StructArray(accounts))
+        new{P}(indexes, StructArray(accounts))
     end
 end
 
@@ -176,12 +191,8 @@ end
 Base.show(io::IO, id::Identifier) = print(io, id.value)
 Base.show(io::IO, code::AccountCode) = print(io, code.value)
 
-Base.show(io::IO, ::Type{Debit}) = print(io, "Debit")
-Base.show(io::IO, ::Type{Credit}) = print(io, "Credit")
-
 Base.show(io::IO, acc::Account) = print(io, "$(string(id(acc))): $(balance(acc)).")
-Base.show(io::IO, info::AccountInfo{Debit}) = print(io, "$(code(info)) - $(name(info)): $(balance(info)).")
-Base.show(io::IO, info::AccountInfo{Credit}) = print(io, "$(code(info)) - $(name(info)): $(-balance(info)).")
+Base.show(io::IO, info::AccountInfo) = print(io, "$(code(info)) - $(name(info)): $(balance(info)).")
 
 
 # AbstractTrees.children(info::AccountInfo) =
