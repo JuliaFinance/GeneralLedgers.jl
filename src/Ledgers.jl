@@ -17,7 +17,7 @@ import Instruments: instrument, symbol, amount, name, currency
 using Assets: USD
 
 export Account, Ledger, Entry, AccountId, AccountCode, AccountInfo, AccountGroup
-export id, balance, credit!, debit!, post!, instrument, symbol, amount, name, currency
+export id, balance, credit!, debit!, post!, instrument, symbol, amount, code, name, currency
 
 abstract type Identifier end
 
@@ -48,12 +48,15 @@ struct AccountInfo{B <: Position} <: AccountNode{B}
     name::String
     isdebit::Bool
 
-    function AccountInfo(account::Account{B}, code, name, isdebit=true, parent=nothing) where {B <: Position}
+    function AccountInfo{B}(account::Account{B}, code, name, isdebit=true, parent=nothing) where {B <: Position}
         acc = new{B}(account, code, name, isdebit)
         parent === nothing || push!(parent.subaccounts, acc)
         acc
     end
 end
+
+AccountInfo(account::Account{B}, code, name, isdebit=true, parent=nothing) where {B <: Position} =
+    AccountInfo{B}(account, code, name, isdebit, parent)
 
 struct AccountGroup{B <: Position} <: AccountNode{B}
     id::AccountId
